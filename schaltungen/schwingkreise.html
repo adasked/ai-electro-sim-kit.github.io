@@ -1,0 +1,118 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="description" content="Interaktive Simulation von RL- und RC-Reihenschaltungen mit Schaltplan, Oszilloskop und veränderbaren Bauteilwerten.">
+<title>RL- und RC-Wechselstromkreise – Electro Sim Kit</title>
+<link rel="stylesheet" href="../styles.css">
+<link rel="stylesheet" href="schwingkreise.css?v=20260808-3">
+</head>
+<body class="simulation-page circuit-page">
+<div class="app">
+  <header class="circuit-header">
+    <div>
+      <a class="back-link" href="../index.html" aria-label="Zurück zur Startseite">← Übersicht</a>
+      <h1>RL- und RC-Wechselstromkreise</h1>
+      <p>Bauteilwerte verändern und Spannung, Strom sowie Phasenverschiebung direkt beobachten.</p>
+    </div>
+    <div class="live-pill"><span></span> Simulation aktiv</div>
+  </header>
+
+  <main class="circuit-main">
+    <section class="workspace" aria-label="Simulationsbereich">
+      <div class="mode-switch" role="tablist" aria-label="Schaltung auswählen">
+        <button id="rlTab" class="active" role="tab" aria-selected="true" data-mode="rl">
+          <span class="tab-symbol">L</span><span><strong>RL-Kreis</strong><small>Induktiv</small></span>
+        </button>
+        <button id="rcTab" role="tab" aria-selected="false" data-mode="rc">
+          <span class="tab-symbol capacitor-symbol">C</span><span><strong>RC-Kreis</strong><small>Kapazitiv</small></span>
+        </button>
+      </div>
+
+      <div class="visual-grid">
+        <article class="visual-card schematic-card">
+          <div class="section-heading">
+            <div><span class="section-kicker">Schaltplan</span><h2 id="schematicTitle">RL-Reihenschaltung</h2></div>
+            <span class="ac-badge">~ 10 V</span>
+          </div>
+          <svg id="schematic" viewBox="0 0 720 320" role="img" aria-labelledby="schematicSvgTitle schematicSvgDesc">
+            <title id="schematicSvgTitle">Schaltplan einer RL-Reihenschaltung</title>
+            <desc id="schematicSvgDesc">Eine Wechselspannungsquelle, ein Widerstand und eine Spule in Reihe.</desc>
+            <defs><filter id="softShadow" x="-20%" y="-20%" width="140%" height="140%"><feDropShadow dx="0" dy="4" stdDeviation="5" flood-opacity=".1"/></filter></defs>
+            <path class="wire" d="M152 86H290 M430 86H568V101 M568 241V238H152V198 M152 118V86"/>
+            <circle class="source" cx="152" cy="158" r="40"/>
+            <path class="source-wave" d="M128 158c8-22 16-22 24 0s16 22 24 0"/>
+            <text class="component-caption" x="152" y="222" text-anchor="middle">U = 10 V</text>
+            <g class="iec-component">
+              <path class="component-line" d="M290 86h18M412 86h18"/>
+              <rect class="iec-resistor" x="308" y="72" width="104" height="28" fill="#ffffff" stroke="#334858" stroke-width="4"/>
+            </g>
+            <text class="component-caption" id="rSchematicValue" x="360" y="143" text-anchor="middle">R = 100 Ω</text>
+            <g id="inductorGroup" class="iec-component circuit-symbol">
+              <path class="component-line reactive-line" d="M568 101v18c18 0 18 24 0 24 18 0 18 24 0 24 18 0 18 24 0 24 18 0 18 24 0 24v26"/>
+            </g>
+            <g id="capacitorGroup" class="iec-component circuit-symbol is-hidden" style="display:none">
+              <path class="component-line reactive-line" d="M568 101v58M543 159h50M543 181h50M568 181v60"/>
+            </g>
+            <text class="component-caption" id="reactiveSchematicValue" x="620" y="174">L = 100 mH</text>
+            <circle class="node" cx="152" cy="86" r="5"/><circle class="node" cx="568" cy="86" r="5"/>
+            <g class="current-arrow"><path d="M205 70h58"/><path d="m263 70-11-7m11 7-11 7"/><text x="230" y="57">i(t)</text></g>
+          </svg>
+          <div class="formula-strip"><span id="formulaMain">X<sub>L</sub> = 2 · π · f · L</span><span id="formulaPhase">Z = √(R² + X<sub>L</sub>²)</span></div>
+        </article>
+
+        <article class="visual-card scope-card">
+          <div class="section-heading scope-heading">
+            <div><span class="section-kicker">Oszilloskop</span><h2>Signalverlauf</h2></div>
+            <button id="pauseButton" class="icon-button" aria-label="Animation pausieren" title="Animation pausieren">Ⅱ</button>
+          </div>
+          <div class="scope-wrap"><canvas id="scope" width="900" height="390" aria-label="Diagramm von Spannung und Strom über der Zeit"></canvas></div>
+          <div class="scope-legend"><span><i class="voltage-dot"></i>Spannung u(t)</span><span><i class="current-dot"></i>Strom i(t), skaliert</span></div>
+        </article>
+      </div>
+
+      <section class="metrics" aria-label="Berechnete Werte">
+        <article><span class="metric-icon impedance">Z</span><div><small>Scheinwiderstand</small><strong id="impedanceValue">118,1 Ω</strong></div></article>
+        <article><span class="metric-icon current">I</span><div><small>Effektivstrom</small><strong id="currentValue">84,7 mA</strong></div></article>
+        <article><span class="metric-icon phase">φ</span><div><small>Phasenwinkel</small><strong id="phaseValue">+32,1°</strong></div></article>
+      </section>
+    </section>
+
+    <aside class="control-panel" aria-label="Parameter einstellen">
+      <div class="control-title">
+        <div><span class="section-kicker">Parameter</span><h2>Schaltung einstellen</h2></div>
+        <button id="resetButton" class="reset-button">↻ Reset</button>
+      </div>
+      <div class="control-group active-control">
+        <div class="control-label"><label for="resistance">Widerstand R</label><output id="resistanceOutput">100 Ω</output></div>
+        <input id="resistance" type="range" min="10" max="1000" step="10" value="100">
+        <div class="range-scale"><span>10 Ω</span><span>1 kΩ</span></div>
+      </div>
+      <div id="inductanceGroup" class="control-group active-control">
+        <div class="control-label"><label for="inductance">Induktivität L</label><output id="inductanceOutput">100 mH</output></div>
+        <input id="inductance" type="range" min="1" max="500" step="1" value="100">
+        <div class="range-scale"><span>1 mH</span><span>500 mH</span></div>
+      </div>
+      <div id="capacitanceGroup" class="control-group inactive-control">
+        <div class="control-label"><label for="capacitance">Kapazität C</label><output id="capacitanceOutput">10 µF</output></div>
+        <input id="capacitance" type="range" min="1" max="100" step="1" value="10" disabled>
+        <div class="range-scale"><span>1 µF</span><span>100 µF</span></div>
+        <small class="inactive-note">Im RL-Kreis nicht wirksam</small>
+      </div>
+      <div class="control-group active-control frequency-control">
+        <div class="control-label"><label for="frequency">Frequenz f</label><output id="frequencyOutput">100 Hz</output></div>
+        <input id="frequency" type="range" min="10" max="1000" step="10" value="100">
+        <div class="range-scale"><span>10 Hz</span><span>1 kHz</span></div>
+      </div>
+      <div class="explanation" id="explanation">
+        <div class="explanation-icon">L</div>
+        <div><strong>Induktives Verhalten</strong><p>Der Strom eilt der Spannung nach. Mit steigender Frequenz wächst der induktive Widerstand.</p></div>
+      </div>
+    </aside>
+  </main>
+  <footer>Didaktisch vereinfachtes Modell einer idealen sinusförmigen Wechselspannungsquelle.</footer>
+</div>
+<script src="schwingkreise.js?v=20260808-3"></script>
+</body>
+</html>

@@ -1,0 +1,453 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Kapazitiver Näherungssensor – Interaktive Unterrichtsanimation</title>
+<link rel="stylesheet" href="../styles.css">
+<style>
+@media (min-width: 981px) {
+  html, body { height: 100%; overflow: hidden; }
+  .simulation-page .app { display: flex; flex-direction: column; height: 100vh; padding: 10px; }
+  .simulation-page header { flex: 0 0 auto; padding: 10px 16px; }
+  .simulation-page header h1 { margin-bottom: 2px; font-size: 21px; }
+  .simulation-page header p { font-size: 13px; }
+  .simulation-page .main { flex: 1 1 auto; min-height: 0; grid-template-columns: minmax(0, 1fr) 315px; gap: 10px; padding: 10px; }
+  .simulation-page .stage { display: flex; min-height: 0; align-items: flex-start; padding: 8px; }
+  .simulation-page canvas { width: 100%; max-height: 100%; object-fit: contain; }
+  .simulation-page .side { overflow: hidden; padding: 9px; }
+  .simulation-page .card { margin-bottom: 8px; padding: 9px; }
+  .simulation-page .card:last-child { margin-bottom: 0; }
+  .simulation-page .card h2 { margin-bottom: 6px; font-size: 14px; }
+  .simulation-page .controls button { margin: 2px 0; padding: 6px 9px; }
+  .simulation-page .controls label { margin-top: 5px; font-size: 12px; }
+  .simulation-page .controls select { margin-top: 2px; padding: 6px 8px; }
+  .simulation-page .material-note { margin-bottom: 4px; }
+  .simulation-page .material-table th,
+  .simulation-page .material-table td { padding: 3px 4px; }
+  .simulation-page footer { flex: 0 0 auto; margin-top: 4px; }
+}
+</style>
+</head>
+<body class="simulation-page">
+<div class="app">
+<header>
+  <h1>Kapazitiver Näherungssensor (WIP)</h1>
+  <p>Interaktive Darstellung von elektrischem Feld, Kapazitätsänderung, Oszillator und Schaltausgang</p>
+</header>
+
+<div class="main">
+  <section class="stage">
+    <canvas id="canvas" width="1040" height="590"></canvas>
+  </section>
+
+  <aside class="side">
+    <div class="card controls">
+      <h2>Steuerung</h2>
+      <button id="playBtn">Pause</button>
+      <button id="manualBtn" class="secondary">Manueller Modus</button>
+      <button id="resetBtn" class="secondary">Zurücksetzen</button>
+      <label for="material">Material des Objekts</label>
+      <select id="material">
+        <option value="water">Wasser</option>
+        <option value="metal">Metall</option>
+        <option value="glass">Glas</option>
+        <option value="wood">Holz</option>
+        <option value="plastic">Kunststoff</option>
+        <option value="oil">Öl</option>
+      </select>
+      <label for="sensitivity">Sensor-Empfindlichkeit</label>
+      <input id="sensitivity" type="range" min="40" max="120" value="100">
+      <label for="position">Position des Objekts</label>
+      <input id="position" type="range" min="285" max="700" value="700" disabled>
+      <label for="speed">Animationsgeschwindigkeit</label>
+      <input id="speed" type="range" min="1" max="5" value="2">
+    </div>
+
+    <div class="card">
+      <h2>Materialabhängiger Schaltabstand</h2>
+      <p class="material-note">Schaltabstand bei 100 % Empfindlichkeit (didaktisches Modell)</p>
+      <table class="material-table">
+        <thead><tr><th>Material</th><th>Faktor</th><th>Abstand</th></tr></thead>
+        <tbody>
+          <tr data-material="water"><td>Wasser</td><td>1,00</td><td>20 mm</td></tr>
+          <tr data-material="metal"><td>Metall</td><td>1,00</td><td>20 mm</td></tr>
+          <tr data-material="glass"><td>Glas</td><td>0,75</td><td>15 mm</td></tr>
+          <tr data-material="wood"><td>Holz</td><td>0,55</td><td>11 mm</td></tr>
+          <tr data-material="plastic"><td>Kunststoff</td><td>0,40</td><td>8 mm</td></tr>
+          <tr data-material="oil"><td>Öl</td><td>0,30</td><td>6 mm</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+  </aside>
+</div>
+<footer>Die Darstellung und die Materialfaktoren sind didaktisch vereinfacht und nicht maßstabsgetreu.</footer>
+</div>
+
+<script>
+const canvas = document.getElementById("canvas");
+const ctx = canvas.getContext("2d");
+
+const positionSlider = document.getElementById("position");
+const sensitivitySlider = document.getElementById("sensitivity");
+const speedSlider = document.getElementById("speed");
+const materialSelect = document.getElementById("material");
+const playBtn = document.getElementById("playBtn");
+const manualBtn = document.getElementById("manualBtn");
+const resetBtn = document.getElementById("resetBtn");
+
+const sensorFaceX = 285;
+const minObjectX = sensorFaceX;
+const maxObjectX = 700;
+const maxDistanceMm = 60;
+const nominalSwitchDistanceMm = 20;
+const hysteresisFactor = 1.12;
+const baseCapacitancePf = 10;
+const materials = {
+  water: {name:"Wasser", lines:["WASSER"], factor:1, fill:"#55aee7", accent:"#bce7ff"},
+  metal: {name:"Metall", lines:["METALL"], factor:1, fill:"#707c86", accent:"#c2cbd2"},
+  glass: {name:"Glas", lines:["GLAS"], factor:.75, fill:"rgba(116,190,220,.58)", accent:"#e7f7ff"},
+  wood: {name:"Holz", lines:["HOLZ"], factor:.55, fill:"#a87542", accent:"#d8ad78"},
+  plastic: {name:"Kunststoff", lines:["KUNSTSTOFF"], factor:.4, fill:"#e1a441", accent:"#ffe1a0"},
+  oil: {name:"Öl", lines:["ÖL"], factor:.3, fill:"#c6a52d", accent:"#f4df75"}
+};
+
+let objectX = maxObjectX;
+let direction = -1;
+let running = true;
+let manual = false;
+let last = performance.now();
+let displayedResponse = 0;
+let detectedState = false;
+
+function getDistanceMm(){
+  return Math.max(0,Math.min(maxDistanceMm,
+    (objectX-minObjectX)/(maxObjectX-minObjectX)*maxDistanceMm));
+}
+
+function getMaterial(){
+  return materials[materialSelect.value];
+}
+
+function getSensitivity(){
+  return Number(sensitivitySlider.value)/100;
+}
+
+function getSwitchOnDistanceMm(material=getMaterial()){
+  return nominalSwitchDistanceMm*material.factor*getSensitivity();
+}
+
+function getSwitchOffDistanceMm(material=getMaterial()){
+  return Math.min(maxDistanceMm,getSwitchOnDistanceMm(material)*hysteresisFactor);
+}
+
+function formatDecimal(value,digits=1){
+  return value.toFixed(digits).replace(".",",");
+}
+
+function updateDetection(distanceMm,material){
+  if(!detectedState && distanceMm<=getSwitchOnDistanceMm(material)) detectedState=true;
+  if(detectedState && distanceMm>getSwitchOffDistanceMm(material)) detectedState=false;
+  return detectedState;
+}
+
+function roundRect(x,y,w,h,r,fill,stroke){
+  ctx.beginPath();
+  ctx.roundRect(x,y,w,h,r);
+  if(fill){ctx.fillStyle=fill;ctx.fill()}
+  if(stroke){ctx.strokeStyle=stroke;ctx.stroke()}
+}
+
+function drawOperatingStatus(detected,response,capacitance,material){
+  ctx.fillStyle="#17212b";
+  ctx.font="bold 15px Arial";
+  ctx.fillText("Betriebszustand",28,26);
+
+  const states=[
+    ["Objekt im Erfassungsbereich",detected?"JA":"NEIN",detected],
+    ["Kapazität",formatDecimal(capacitance)+" pF",null],
+    ["Oszillator",response>.45?"VERÄNDERT":"NORMAL",response<=.45],
+    ["Schaltausgang Q",detected?"1":"0",detected],
+    ["Sensor-LED",detected?"GRÜN":"ROT",detected],
+    ["Empfindlichkeit",sensitivitySlider.value+" %",null],
+    ["Schaltabstand",formatDecimal(getSwitchOnDistanceMm(material))+" mm",null]
+  ];
+  states.forEach(([label,value,active],index)=>{
+    const x=28+(index%4)*249;
+    const y=36+Math.floor(index/4)*43;
+    roundRect(x,y,237,34,7,"#f6f8fa","#ccd5dd");
+    ctx.fillStyle="#52616d";
+    ctx.font="11px Arial";
+    ctx.fillText(label,x+10,y+15);
+    ctx.fillStyle=active===null?"#253440":active?"#1c9c5a":"#d04444";
+    ctx.font="bold 12px Arial";
+    ctx.textAlign="right";
+    ctx.fillText(value,x+227,y+24);
+    ctx.textAlign="start";
+  });
+}
+
+function drawSensor(detected){
+  ctx.save();
+  ctx.shadowColor="rgba(0,0,0,.16)";
+  ctx.shadowBlur=12;
+  roundRect(95,235,180,190,18,"#6f42a1");
+  ctx.restore();
+
+  ctx.fillStyle="#4d2878";
+  ctx.fillRect(248,250,27,160);
+  ctx.fillStyle="#e9c75f";
+  ctx.fillRect(275,250,10,160);
+
+  ctx.fillStyle="#fff";
+  ctx.font="bold 18px Arial";
+  ctx.fillText("KAPAZITIVER",112,308);
+  ctx.fillText("SENSOR",137,334);
+
+  ctx.beginPath();
+  ctx.arc(130,270,11,0,Math.PI*2);
+  ctx.fillStyle=detected?"#24d275":"#ff4f4f";
+  ctx.fill();
+  ctx.strokeStyle="#fff";
+  ctx.lineWidth=2;
+  ctx.stroke();
+
+  ctx.strokeStyle="#2e3a44";
+  ctx.lineWidth=7;
+  ctx.beginPath();
+  ctx.moveTo(95,370);
+  ctx.lineTo(48,370);
+  ctx.lineTo(48,475);
+  ctx.stroke();
+
+  ctx.font="13px Arial";
+  ctx.fillStyle="#23313d";
+  ctx.fillText("aktive Elektrode",216,226);
+  ctx.fillText("Status-LED",105,448);
+}
+
+function drawField(response){
+  ctx.save();
+  ctx.beginPath();
+  ctx.rect(sensorFaceX,205,450,300);
+  ctx.clip();
+  ctx.lineWidth=2;
+
+  const strength=1-response*.08;
+  for(let i=0;i<7;i++){
+    const reach=(70+i*28)*strength;
+    const upperEndY=290-i*5;
+    const lowerEndY=370+i*5;
+    ctx.strokeStyle="#8a56c2";
+    ctx.globalAlpha=Math.min(1,.2+i*.075+response*.08);
+
+    ctx.beginPath();
+    ctx.moveTo(sensorFaceX,322);
+    ctx.bezierCurveTo(sensorFaceX+reach,322,sensorFaceX+reach,upperEndY,sensorFaceX,upperEndY);
+    ctx.stroke();
+
+    ctx.beginPath();
+    ctx.moveTo(sensorFaceX,338);
+    ctx.bezierCurveTo(sensorFaceX+reach,338,sensorFaceX+reach,lowerEndY,sensorFaceX,lowerEndY);
+    ctx.stroke();
+  }
+  ctx.restore();
+}
+
+function drawObject(detected,material,response){
+  ctx.save();
+  ctx.shadowColor="rgba(0,0,0,.2)";
+  ctx.shadowBlur=10;
+  roundRect(objectX,260,105,145,10,material.fill,"#3d4851");
+  ctx.restore();
+
+  ctx.fillStyle=material.accent;
+  for(let i=0;i<6;i++) ctx.fillRect(objectX+12,276+i*20,80,2);
+  ctx.fillStyle="#fff";
+  ctx.font="bold 13px Arial";
+  ctx.textAlign="center";
+  material.lines.forEach((line,index)=>ctx.fillText(line,objectX+52,337+index*16));
+  ctx.textAlign="start";
+
+  if(response>.12){
+    ctx.fillStyle="#f08a24";
+    ctx.font="bold 17px Arial";
+    const alpha=Math.min(1,.25+response);
+    ctx.globalAlpha=alpha;
+    for(let row=0;row<4;row++){
+      for(let col=0;col<3;col++){
+        const sign=(row+col)%2===0?"+":"−";
+        ctx.fillText(sign,objectX+20+col*31,292+row*28);
+      }
+    }
+    ctx.globalAlpha=1;
+    if(detected){
+      ctx.font="13px Arial";
+      ctx.fillStyle="#c86b14";
+      ctx.fillText("Polarisation",objectX+10,430);
+    }
+  }
+}
+
+function drawDistance(){
+  ctx.strokeStyle="#7b8995";
+  ctx.lineWidth=1.5;
+  ctx.setLineDash([6,5]);
+  ctx.beginPath();
+  ctx.moveTo(sensorFaceX,470);
+  ctx.lineTo(objectX,470);
+  ctx.stroke();
+  ctx.setLineDash([]);
+  ctx.beginPath();
+  ctx.moveTo(sensorFaceX,462);ctx.lineTo(sensorFaceX,478);
+  ctx.moveTo(objectX,462);ctx.lineTo(objectX,478);
+  ctx.stroke();
+  ctx.fillStyle="#455560";
+  ctx.font="14px Arial";
+  ctx.fillText(`Abstand: ${Math.round(getDistanceMm())} mm (max. 60 mm)`,(sensorFaceX+objectX)/2-85,492);
+}
+
+function drawSchmittTrigger(detected,distanceMm,material){
+  roundRect(40,465,960,119,10,"#f6f8fa","#ccd5dd");
+  ctx.fillStyle="#17212b";
+  ctx.font="bold 15px Arial";
+  ctx.fillText("Schmitt-Trigger – Hysteresekennlinie",58,487);
+
+  const onDistance=getSwitchOnDistanceMm(material);
+  const offDistance=getSwitchOffDistanceMm(material);
+  ctx.font="12px Arial";
+  ctx.fillStyle="#52616d";
+  ctx.fillText(`${material.name}: EIN bei ${formatDecimal(onDistance)} mm`,58,516);
+  ctx.fillText(`AUS bei ${formatDecimal(offDistance)} mm`,58,532);
+  ctx.fillStyle=detected?"#1c9c5a":"#d04444";
+  ctx.font="bold 13px Arial";
+  ctx.fillText(`Aktueller Zustand: Q = ${detected?1:0}`,58,550);
+
+  const left=350, right=965, high=503, low=533;
+  const displayRange=Math.max(24,onDistance*2.2);
+  const proximity=Math.max(0,Math.min(1,1-distanceMm/displayRange));
+  const onX=left+(1-onDistance/displayRange)*(right-left);
+  const offX=left+(1-offDistance/displayRange)*(right-left);
+  const currentX=left+proximity*(right-left);
+
+  ctx.strokeStyle="#8795a1";
+  ctx.lineWidth=1.5;
+  ctx.beginPath();
+  ctx.moveTo(left,high-8);ctx.lineTo(left,low+10);ctx.lineTo(right+8,low+10);
+  ctx.stroke();
+  ctx.fillStyle="#52616d";
+  ctx.font="12px Arial";
+  ctx.fillText("Q=1",310,high+4);
+  ctx.fillText("Q=0",310,low+4);
+  ctx.fillText("Näherung / Kapazität",825,578);
+
+  ctx.setLineDash([4,4]);
+  ctx.strokeStyle="#a8b3bc";
+  [offX,onX].forEach(x=>{ctx.beginPath();ctx.moveTo(x,high-5);ctx.lineTo(x,low+10);ctx.stroke()});
+  ctx.setLineDash([]);
+  ctx.fillStyle="#52616d";
+  ctx.textAlign="center";
+  ctx.fillText(`${formatDecimal(offDistance)} mm`,offX,563);
+  ctx.fillText(`${formatDecimal(onDistance)} mm`,onX,582);
+
+  ctx.strokeStyle="#1c9c5a";
+  ctx.lineWidth=3;
+  ctx.beginPath();ctx.moveTo(left,low);ctx.lineTo(onX,low);ctx.lineTo(onX,high);ctx.lineTo(right,high);ctx.stroke();
+  ctx.strokeStyle="#f08a24";
+  ctx.beginPath();ctx.moveTo(right,high+7);ctx.lineTo(offX,high+7);ctx.lineTo(offX,low-7);ctx.lineTo(left,low-7);ctx.stroke();
+  ctx.strokeStyle=detected?"#1c9c5a":"#d04444";
+  ctx.lineWidth=2;
+  ctx.beginPath();ctx.moveTo(currentX,high-10);ctx.lineTo(currentX,low+10);ctx.stroke();
+  ctx.beginPath();ctx.arc(currentX,detected?high:low,5,0,Math.PI*2);
+  ctx.fillStyle=detected?"#1c9c5a":"#d04444";ctx.fill();
+  ctx.textAlign="start";
+}
+
+function updateValues(){
+  const material=getMaterial();
+  document.querySelectorAll(".material-table tr[data-material]").forEach(row=>{
+    row.classList.toggle("selected",row.dataset.material===materialSelect.value);
+  });
+}
+
+function draw(dt){
+  ctx.clearRect(0,0,canvas.width,canvas.height);
+  const distanceMm=getDistanceMm();
+  const material=getMaterial();
+  const detected=updateDetection(distanceMm,material);
+  const influenceRange=Math.max(1,nominalSwitchDistanceMm*2.4*material.factor*getSensitivity());
+  const proximity=Math.max(0,1-distanceMm/influenceRange);
+  const targetResponse=proximity*proximity*(3-2*proximity);
+  const easing=1-Math.exp(-Math.max(0,dt)/180);
+  displayedResponse+=(targetResponse-displayedResponse)*easing;
+  const response=displayedResponse;
+  const capacitance=baseCapacitancePf+response*6*material.factor*getSensitivity();
+
+  drawOperatingStatus(detected,response,capacitance,material);
+  ctx.save();
+  ctx.translate(0,-45);
+  drawSensor(detected);
+  drawField(response);
+  drawObject(detected,material,response);
+  drawDistance();
+  ctx.restore();
+  drawSchmittTrigger(detected,distanceMm,material);
+}
+
+function animate(now){
+  const dt=Math.min(32,now-last);
+  last=now;
+  if(running && !manual){
+    objectX+=direction*Number(speedSlider.value)*dt*.045;
+    if(objectX<minObjectX){objectX=minObjectX;direction=1}
+    if(objectX>maxObjectX){objectX=maxObjectX;direction=-1}
+    positionSlider.value=objectX;
+  }
+  draw(dt);
+  requestAnimationFrame(animate);
+}
+
+playBtn.addEventListener("click",()=>{
+  running=!running;
+  playBtn.textContent=running?"Pause":"Start";
+});
+
+manualBtn.addEventListener("click",()=>{
+  manual=!manual;
+  positionSlider.disabled=!manual;
+  manualBtn.textContent=manual?"Automatischer Modus":"Manueller Modus";
+});
+
+positionSlider.addEventListener("input",e=>{objectX=Number(e.target.value)});
+
+materialSelect.addEventListener("change",()=>{
+  detectedState=false;
+  updateValues();
+});
+
+sensitivitySlider.addEventListener("input",()=>{
+  detectedState=false;
+  updateValues();
+});
+
+resetBtn.addEventListener("click",()=>{
+  objectX=maxObjectX;
+  direction=-1;
+  running=true;
+  manual=false;
+  displayedResponse=0;
+  detectedState=false;
+  sensitivitySlider.value=100;
+  positionSlider.disabled=true;
+  positionSlider.value=objectX;
+  playBtn.textContent="Pause";
+  manualBtn.textContent="Manueller Modus";
+  updateValues();
+});
+
+updateValues();
+requestAnimationFrame(animate);
+</script>
+</body>
+</html>

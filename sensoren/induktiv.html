@@ -1,0 +1,503 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Induktiver Näherungssensor – Interaktive Unterrichtsanimation</title>
+<link rel="stylesheet" href="../styles.css">
+<style>
+@media (min-width: 981px) {
+  html, body { height: 100%; overflow: hidden; }
+  .simulation-page .app { display: flex; flex-direction: column; height: 100vh; padding: 10px; }
+  .simulation-page header { flex: 0 0 auto; padding: 10px 16px; }
+  .simulation-page header h1 { margin-bottom: 2px; font-size: 21px; }
+  .simulation-page header p { font-size: 13px; }
+  .simulation-page .main { flex: 1 1 auto; min-height: 0; grid-template-columns: minmax(0, 1fr) 315px; gap: 10px; padding: 10px; }
+  .simulation-page .stage { display: flex; min-height: 0; align-items: flex-start; padding: 8px; }
+  .simulation-page canvas { width: 100%; max-height: 100%; object-fit: contain; }
+  .simulation-page .side { overflow: hidden; padding: 9px; }
+  .simulation-page .card { margin-bottom: 8px; padding: 9px; }
+  .simulation-page .card:last-child { margin-bottom: 0; }
+  .simulation-page .card h2 { margin-bottom: 6px; font-size: 14px; }
+  .simulation-page .controls button { margin: 2px 0; padding: 6px 9px; }
+  .simulation-page .controls label { margin-top: 5px; font-size: 12px; }
+  .simulation-page .controls select { margin-top: 2px; padding: 6px 8px; }
+  .simulation-page .material-note { margin-bottom: 4px; }
+  .simulation-page .material-table th,
+  .simulation-page .material-table td { padding: 3px 4px; }
+  .simulation-page footer { flex: 0 0 auto; margin-top: 4px; }
+}
+</style>
+</head>
+<body class="simulation-page">
+<div class="app">
+<header>
+  <h1>Induktiver Näherungssensor (WIP) </h1>
+  <p>Interaktive Darstellung von elektromagnetischem Feld, Wirbelströmen, Oszillatordämpfung und Schaltausgang</p>
+</header>
+
+<div class="main">
+  <section class="stage">
+    <canvas id="canvas" width="1040" height="680"></canvas>
+  </section>
+
+  <aside class="side">
+    <div class="card controls">
+      <h2>Steuerung</h2>
+      <button id="playBtn">Pause</button>
+      <button id="manualBtn" class="secondary">Manueller Modus</button>
+      <button id="resetBtn" class="secondary">Zurücksetzen</button>
+      <label for="material">Material</label>
+      <select id="material">
+        <option value="steel">Baustahl</option>
+        <option value="aluminiumFoil">Aluminiumfolie</option>
+        <option value="stainlessSteel">Rostfreier Stahl</option>
+        <option value="aluminium">Aluminium</option>
+        <option value="brass">Messing</option>
+        <option value="copper">Kupfer</option>
+      </select>
+      <label for="position">Position des Metallobjekts</label>
+      <input id="position" type="range" min="285" max="700" value="700" disabled>
+      <label for="speed">Animationsgeschwindigkeit</label>
+      <input id="speed" type="range" min="1" max="5" value="2">
+    </div>
+
+    <div class="card">
+      <h2>Materialabhängiger Schaltabstand</h2>
+      <p class="material-note">Schaltabstand = 20 mm × Reduktionsfaktor</p>
+      <table class="material-table">
+        <thead><tr><th>Material</th><th>Faktor</th><th>Abstand</th></tr></thead>
+        <tbody>
+          <tr data-material="steel"><td>Baustahl</td><td>1,00</td><td>20 mm</td></tr>
+          <tr data-material="aluminiumFoil"><td>Aluminiumfolie</td><td>1,00</td><td>20 mm</td></tr>
+          <tr data-material="stainlessSteel"><td>Rostfreier Stahl</td><td>0,85</td><td>17 mm</td></tr>
+          <tr data-material="aluminium"><td>Aluminium</td><td>0,40</td><td>8 mm</td></tr>
+          <tr data-material="brass"><td>Messing</td><td>0,40</td><td>8 mm</td></tr>
+          <tr data-material="copper"><td>Kupfer</td><td>0,30</td><td>6 mm</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+  </aside>
+</div>
+<footer>Die Darstellung ist didaktisch vereinfacht und nicht maßstabsgetreu.</footer>
+</div>
+
+<script>
+const canvas = document.getElementById("canvas");
+const ctx = canvas.getContext("2d");
+
+const positionSlider = document.getElementById("position");
+const speedSlider = document.getElementById("speed");
+const materialSelect = document.getElementById("material");
+const playBtn = document.getElementById("playBtn");
+const manualBtn = document.getElementById("manualBtn");
+const resetBtn = document.getElementById("resetBtn");
+
+const sensorFaceX = 285;
+const minObjectX = sensorFaceX;
+const maxObjectX = 700;
+const maxDistanceMm = 60;
+const nominalSwitchDistanceMm = 20;
+const hysteresisFactor = 1.1;
+const materials = {
+  steel: {name:"Baustahl", lines:["BAUSTAHL"], factor:1, fill:"#6c7781", accent:"#aeb8c2"},
+  aluminiumFoil: {name:"Aluminiumfolie", lines:["ALUMINIUM-","FOLIE"], factor:1, fill:"#aeb8c2", accent:"#e4e9ed"},
+  stainlessSteel: {name:"Rostfreier Stahl", lines:["ROSTFREIER","STAHL"], factor:.85, fill:"#77838d", accent:"#c3cbd1"},
+  aluminium: {name:"Aluminium", lines:["ALUMINIUM"], factor:.4, fill:"#9ca9b2", accent:"#d7dde1"},
+  brass: {name:"Messing", lines:["MESSING"], factor:.4, fill:"#a98235", accent:"#ddbd68"},
+  copper: {name:"Kupfer", lines:["KUPFER"], factor:.3, fill:"#a95f3b", accent:"#db966d"}
+};
+
+let objectX = maxObjectX;
+let direction = -1;
+let running = true;
+let manual = false;
+let phase = 0;
+let last = performance.now();
+let displayedDamping = 0;
+let detectedState = false;
+
+// Berechnet den aktuellen Objektabstand zur Sensorfläche in Millimetern.
+function getDistanceMm(){
+  return Math.max(0,Math.min(maxDistanceMm,
+    (objectX-minObjectX)/(maxObjectX-minObjectX)*maxDistanceMm));
+}
+
+// Liefert die Daten des aktuell ausgewählten Materials.
+function getMaterial(){
+  return materials[materialSelect.value];
+}
+
+// Berechnet den materialabhängigen Einschaltabstand.
+function getSwitchOnDistanceMm(material=getMaterial()){
+  return nominalSwitchDistanceMm*material.factor;
+}
+
+// Berechnet mit der Hysterese den Abstand, bei dem der Sensor wieder ausschaltet.
+function getSwitchOffDistanceMm(material=getMaterial()){
+  return getSwitchOnDistanceMm(material)*hysteresisFactor;
+}
+
+// Formatiert den Reduktionsfaktor mit deutschem Dezimaltrennzeichen.
+function formatFactor(value){
+  return value.toFixed(2).replace(".",",");
+}
+
+// Aktualisiert den Schaltzustand unter Berücksichtigung der Hysterese.
+function updateDetection(distanceMm,material){
+  if(!detectedState && distanceMm<=getSwitchOnDistanceMm(material)) detectedState=true;
+  if(detectedState && distanceMm>getSwitchOffDistanceMm(material)) detectedState=false;
+  return detectedState;
+}
+
+// Zeichnet ein abgerundetes Rechteck mit optionaler Füllung und Kontur.
+function roundRect(x,y,w,h,r,fill,stroke){
+  ctx.beginPath();
+  ctx.roundRect(x,y,w,h,r);
+  if(fill){ctx.fillStyle=fill;ctx.fill()}
+  if(stroke){ctx.strokeStyle=stroke;ctx.stroke()}
+}
+
+// Zeichnet die aktuellen Betriebswerte im oberen Bereich der Animation.
+function drawOperatingStatus(detected,damping,material){
+  ctx.fillStyle="#17212b";
+  ctx.font="bold 15px Arial";
+  ctx.fillText("Betriebszustand",28,26);
+
+  const states=[
+    ["Metall im Erfassungsbereich",detected?"JA":"NEIN",detected],
+    ["Oszillatoramplitude",Math.round((1-damping*.78)*100)+" %",null],
+    ["Oszillator",damping>.45?"GEDÄMPFT":"AKTIV",damping<=.45],
+    ["Schaltausgang Q",detected?"1":"0",detected],
+    ["Sensor-LED",detected?"GRÜN":"ROT",detected],
+    ["Reduktionsfaktor",formatFactor(material.factor),null],
+    ["Schaltabstand",getSwitchOnDistanceMm(material).toFixed(0)+" mm",null]
+  ];
+  states.forEach(([label,value,active],index)=>{
+    const x=28+(index%4)*249;
+    const y=36+Math.floor(index/4)*43;
+    roundRect(x,y,237,34,7,"#f6f8fa","#ccd5dd");
+    ctx.fillStyle="#52616d";
+    ctx.font="11px Arial";
+    ctx.fillText(label,x+10,y+15);
+    ctx.fillStyle=active===null?"#253440":active?"#1c9c5a":"#d04444";
+    ctx.font="bold 12px Arial";
+    ctx.textAlign="right";
+    ctx.fillText(value,x+227,y+24);
+    ctx.textAlign="start";
+  });
+}
+
+// Zeichnet Sensor, aktive Fläche, Anschlussleitung und Status-LED.
+function drawSensor(detected){
+  ctx.save();
+  ctx.shadowColor="rgba(0,0,0,.16)";
+  ctx.shadowBlur=12;
+  roundRect(95,235,180,190,18,"#1475bd");
+  ctx.restore();
+
+  ctx.fillStyle="#0d4f82";
+  ctx.fillRect(250,250,35,160);
+  ctx.fillStyle="#aeb8c2";
+  ctx.fillRect(275,250,10,160);
+
+  ctx.fillStyle="#fff";
+  ctx.font="bold 18px Arial";
+  ctx.fillText("INDUKTIVER",116,308);
+  ctx.fillText("SENSOR",137,334);
+
+  ctx.beginPath();
+  ctx.arc(130,270,11,0,Math.PI*2);
+  ctx.fillStyle=detected?"#24d275":"#ff4f4f";
+  ctx.fill();
+  ctx.strokeStyle="#fff";
+  ctx.lineWidth=2;
+  ctx.stroke();
+
+  ctx.strokeStyle="#2e3a44";
+  ctx.lineWidth=7;
+  ctx.beginPath();
+  ctx.moveTo(95,370);
+  ctx.lineTo(48,370);
+  ctx.lineTo(48,475);
+  ctx.stroke();
+
+  ctx.font="13px Arial";
+  ctx.fillStyle="#23313d";
+  ctx.fillText("aktive Fläche",236,226);
+  ctx.fillText("Status-LED",105,448);
+}
+
+// Zeichnet das elektromagnetische Feld abhängig von der Oszillatordämpfung.
+function drawField(damping){
+  ctx.save();
+  ctx.beginPath();
+  ctx.rect(sensorFaceX,205,450,300);
+  ctx.clip();
+  ctx.lineWidth=2;
+
+  const strength=1-damping*.45;
+  for(let i=0;i<7;i++){
+    const reach=(70+i*28)*strength;
+    const upperEndY=290-i*5;
+    const lowerEndY=370+i*5;
+    ctx.strokeStyle="#1682d4";
+    ctx.globalAlpha=.2+i*.075;
+
+    ctx.beginPath();
+    ctx.moveTo(sensorFaceX,322);
+    ctx.bezierCurveTo(sensorFaceX+reach,322,sensorFaceX+reach,upperEndY,sensorFaceX,upperEndY);
+    ctx.stroke();
+
+    ctx.beginPath();
+    ctx.moveTo(sensorFaceX,338);
+    ctx.bezierCurveTo(sensorFaceX+reach,338,sensorFaceX+reach,lowerEndY,sensorFaceX,lowerEndY);
+    ctx.stroke();
+  }
+  ctx.restore();
+}
+
+// Zeichnet das Metallobjekt und blendet die Wirbelströme abhängig von der Nähe ein.
+function drawMetal(material,eddyStrength){
+  ctx.save();
+  ctx.shadowColor="rgba(0,0,0,.2)";
+  ctx.shadowBlur=10;
+  roundRect(objectX,260,105,145,10,material.fill,"#3d4851");
+  ctx.restore();
+
+  ctx.fillStyle=material.accent;
+  for(let i=0;i<6;i++){
+    ctx.fillRect(objectX+12,276+i*20,80,2);
+  }
+  ctx.fillStyle="#fff";
+  ctx.font="bold 13px Arial";
+  ctx.textAlign="center";
+  const firstLabelY=material.lines.length>1?329:337;
+  material.lines.forEach((line,index)=>ctx.fillText(line,objectX+52,firstLabelY+index*16));
+  ctx.textAlign="start";
+
+  if(eddyStrength>0.01){
+    ctx.save();
+    ctx.globalAlpha=.12+.88*eddyStrength;
+    ctx.strokeStyle="#f08a24";
+    ctx.lineWidth=3;
+    for(let i=0;i<4;i++){
+      ctx.beginPath();
+      ctx.ellipse(objectX+52,333,16+i*11,30+i*7,0,0,Math.PI*2);
+      ctx.stroke();
+      ctx.beginPath();
+      ctx.moveTo(objectX+52+(16+i*11),333);
+      ctx.lineTo(objectX+45+(16+i*11),328);
+      ctx.lineTo(objectX+46+(16+i*11),337);
+      ctx.closePath();
+      ctx.fillStyle="#f08a24";
+      ctx.fill();
+    }
+    ctx.fillStyle="#c86b14";
+    ctx.font="13px Arial";
+    ctx.fillText("Wirbelströme",objectX+5,430);
+    ctx.restore();
+  }
+}
+
+// Zeichnet die Abstandslinie und den aktuellen Messwert.
+function drawDistance(){
+  ctx.strokeStyle="#7b8995";
+  ctx.lineWidth=1.5;
+  ctx.setLineDash([6,5]);
+  ctx.beginPath();
+  ctx.moveTo(sensorFaceX,470);
+  ctx.lineTo(objectX,470);
+  ctx.stroke();
+  ctx.setLineDash([]);
+  ctx.beginPath();
+  ctx.moveTo(sensorFaceX,462);ctx.lineTo(sensorFaceX,478);
+  ctx.moveTo(objectX,462);ctx.lineTo(objectX,478);
+  ctx.stroke();
+  const d=Math.round(getDistanceMm());
+  ctx.fillStyle="#455560";
+  ctx.font="14px Arial";
+  ctx.fillText(`Abstand: ${d} mm (max. 60 mm)`,(sensorFaceX+objectX)/2-85,492);
+}
+
+// Zeichnet das Oszillatorsignal mit der aktuell gedämpften Amplitude.
+function drawOscilloscope(damping){
+  roundRect(40,465,960,82,10,"#f6f8fa","#ccd5dd");
+  ctx.fillStyle="#17212b";
+  ctx.font="bold 15px Arial";
+  ctx.fillText("LC-Oszillator",58,487);
+
+  ctx.strokeStyle="#dde3e8";
+  ctx.lineWidth=1;
+  for(let x=60;x<980;x+=46){ctx.beginPath();ctx.moveTo(x,495);ctx.lineTo(x,536);ctx.stroke()}
+  for(let y=500;y<537;y+=12){ctx.beginPath();ctx.moveTo(60,y);ctx.lineTo(980,y);ctx.stroke()}
+
+  const amp=16*(1-damping*.78);
+  ctx.strokeStyle="#0b72c9";
+  ctx.lineWidth=2.5;
+  ctx.beginPath();
+  for(let i=0;i<910;i++){
+    const x=62+i;
+    const y=518+amp*Math.sin(i*.13+phase*2);
+    if(i===0)ctx.moveTo(x,y);else ctx.lineTo(x,y);
+  }
+  ctx.stroke();
+
+  ctx.fillStyle=damping>.45?"#d04444":"#1c9c5a";
+  ctx.font="bold 13px Arial";
+  ctx.fillText(damping>.45?"Amplitude gedämpft":"Amplitude normal",820,487);
+}
+
+// Zeichnet die Hysteresekennlinie und markiert den aktuellen Schaltpunkt.
+function drawSchmittTrigger(detected,distanceMm,material){
+  roundRect(40,557,960,119,10,"#f6f8fa","#ccd5dd");
+  ctx.fillStyle="#17212b";
+  ctx.font="bold 15px Arial";
+  ctx.fillText("Schmitt-Trigger – Hysteresekennlinie",58,579);
+
+  ctx.font="12px Arial";
+  ctx.fillStyle="#52616d";
+  const switchOnDistanceMm=getSwitchOnDistanceMm(material);
+  const switchOffDistanceMm=getSwitchOffDistanceMm(material);
+  ctx.fillText(`${material.name}: EIN bei ${switchOnDistanceMm.toFixed(1).replace(".",",")} mm`,58,608);
+  ctx.fillText(`AUS bei ${switchOffDistanceMm.toFixed(1).replace(".",",")} mm`,58,624);
+  ctx.fillStyle=detected?"#1c9c5a":"#d04444";
+  ctx.font="bold 13px Arial";
+  ctx.fillText(`Aktueller Zustand: Q = ${detected?1:0}`,58,642);
+
+  const left=350, right=965, high=595, low=625;
+  const materialRange=maxDistanceMm*material.factor;
+  const proximity=Math.max(0,Math.min(1,1-distanceMm/materialRange));
+  const onX=left+(1-switchOnDistanceMm/materialRange)*(right-left);
+  const offX=left+(1-switchOffDistanceMm/materialRange)*(right-left);
+  const currentX=left+proximity*(right-left);
+
+  ctx.strokeStyle="#8795a1";
+  ctx.lineWidth=1.5;
+  ctx.beginPath();
+  ctx.moveTo(left,high-8);ctx.lineTo(left,low+10);ctx.lineTo(right+8,low+10);
+  ctx.stroke();
+  ctx.fillStyle="#52616d";
+  ctx.font="12px Arial";
+  ctx.fillText("Q=1",310,high+4);
+  ctx.fillText("Q=0",310,low+4);
+  ctx.fillText("Näherung / Sensorsignal",825,670);
+
+  ctx.setLineDash([4,4]);
+  ctx.strokeStyle="#a8b3bc";
+  [offX,onX].forEach(x=>{
+    ctx.beginPath();ctx.moveTo(x,high-5);ctx.lineTo(x,low+10);ctx.stroke();
+  });
+  ctx.setLineDash([]);
+  ctx.fillStyle="#52616d";
+  ctx.textAlign="center";
+  ctx.fillText(`${switchOffDistanceMm.toFixed(1).replace(".",",")} mm`,offX,655);
+  ctx.fillText(`${switchOnDistanceMm.toFixed(1).replace(".",",")} mm`,onX,674);
+
+  ctx.strokeStyle="#1c9c5a";
+  ctx.lineWidth=3;
+  ctx.beginPath();
+  ctx.moveTo(left,low);ctx.lineTo(onX,low);ctx.lineTo(onX,high);ctx.lineTo(right,high);
+  ctx.stroke();
+  ctx.strokeStyle="#f08a24";
+  ctx.beginPath();
+  ctx.moveTo(right,high+7);ctx.lineTo(offX,high+7);ctx.lineTo(offX,low-7);ctx.lineTo(left,low-7);
+  ctx.stroke();
+
+  ctx.strokeStyle=detected?"#1c9c5a":"#d04444";
+  ctx.lineWidth=2;
+  ctx.beginPath();ctx.moveTo(currentX,high-10);ctx.lineTo(currentX,low+10);ctx.stroke();
+  ctx.beginPath();ctx.arc(currentX,detected?high:low,5,0,Math.PI*2);
+  ctx.fillStyle=detected?"#1c9c5a":"#d04444";ctx.fill();
+  ctx.textAlign="start";
+}
+
+// Berechnet den Simulationszustand und zeichnet einen vollständigen Frame.
+function draw(dt){
+  ctx.clearRect(0,0,canvas.width,canvas.height);
+  const distanceMm=getDistanceMm();
+  const material=getMaterial();
+  const detected=updateDetection(distanceMm,material);
+  const proximity=Math.max(0,1-distanceMm/(maxDistanceMm*material.factor));
+  const smoothProximity=proximity*proximity*(3-2*proximity);
+  const targetDamping=.85*smoothProximity;
+  // Zeitbasierte Glättung verhindert sichtbare Sprünge bei Annäherung und Schaltung.
+  const easing=1-Math.exp(-Math.max(0,dt)/180);
+  displayedDamping+=(targetDamping-displayedDamping)*easing;
+  const damping=displayedDamping;
+
+  drawOperatingStatus(detected,damping,material);
+  ctx.save();
+  ctx.translate(0,-45);
+  drawSensor(detected);
+  drawField(damping);
+  drawMetal(material,smoothProximity);
+  drawDistance();
+  ctx.restore();
+  drawOscilloscope(damping);
+  drawSchmittTrigger(detected,distanceMm,material);
+}
+
+// Aktualisiert Bewegung und Zeitbasis und startet den nächsten Animationsframe.
+function animate(now){
+  const dt=Math.min(32,now-last);
+  last=now;
+  phase+=dt*.004;
+
+  if(running && !manual){
+    objectX += direction * Number(speedSlider.value) * dt * .045;
+    if(objectX<minObjectX){objectX=minObjectX;direction=1}
+    if(objectX>maxObjectX){objectX=maxObjectX;direction=-1}
+    positionSlider.value=objectX;
+  }
+  draw(dt);
+  requestAnimationFrame(animate);
+}
+
+// Startet oder pausiert die automatische Bewegung.
+playBtn.addEventListener("click",()=>{
+  running=!running;
+  playBtn.textContent=running?"Pause":"Start";
+});
+
+// Wechselt zwischen automatischer Bewegung und manueller Positionierung.
+manualBtn.addEventListener("click",()=>{
+  manual=!manual;
+  positionSlider.disabled=!manual;
+  manualBtn.textContent=manual?"Automatischer Modus":"Manueller Modus";
+});
+
+// Übernimmt im manuellen Modus die gewählte Objektposition.
+positionSlider.addEventListener("input",e=>{
+  objectX=Number(e.target.value);
+});
+
+// Setzt beim Materialwechsel den Schaltzustand zurück und markiert die Tabellenzeile.
+materialSelect.addEventListener("change",()=>{
+  const material=getMaterial();
+  detectedState=false;
+  document.querySelectorAll(".material-table tr[data-material]").forEach(row=>{
+    row.classList.toggle("selected",row.dataset.material===materialSelect.value);
+  });
+});
+
+// Setzt Animation, Objektposition und Bedienzustand auf die Ausgangswerte zurück.
+resetBtn.addEventListener("click",()=>{
+  objectX=maxObjectX;
+  direction=-1;
+  running=true;
+  manual=false;
+  displayedDamping=0;
+  detectedState=false;
+  positionSlider.disabled=true;
+  positionSlider.value=objectX;
+  playBtn.textContent="Pause";
+  manualBtn.textContent="Manueller Modus";
+});
+
+materialSelect.dispatchEvent(new Event("change"));
+requestAnimationFrame(animate);
+</script>
+</body>
+</html>

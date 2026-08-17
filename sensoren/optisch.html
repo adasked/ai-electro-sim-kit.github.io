@@ -1,0 +1,356 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Optische Sensoren – Interaktive Unterrichtsanimation</title>
+<link rel="stylesheet" href="../styles.css">
+</head>
+<body class="simulation-page">
+<div class="app">
+<header>
+  <h1>Optische Sensoren (WIP)</h1>
+  <p>Einweglichtschranke, Reflexionslichtschranke und Reflexionslichttaster interaktiv untersuchen</p>
+</header>
+
+<div class="main">
+  <section class="stage">
+    <canvas id="canvas" width="1040" height="630"></canvas>
+  </section>
+
+  <aside class="side">
+    <div class="card">
+      <h2>Betriebszustand</h2>
+      <div class="status"><span>Objekt erkannt</span><span id="detBadge" class="badge off">NEIN</span></div>
+      <div class="status"><span>Licht am Empfänger</span><span id="lightBadge" class="badge on">JA</span></div>
+      <div class="status"><span>Schaltausgang Q</span><span id="outBadge" class="badge off">0</span></div>
+      <div class="status"><span>Sensor-LED</span><span id="ledBadge" class="badge off">ROT</span></div>
+      <div class="status"><span>Schaltart</span><strong id="logicValue">Dunkelschaltend</strong></div>
+    </div>
+
+    <div class="card controls">
+      <h2>Steuerung</h2>
+      <button id="playBtn">Pause</button>
+      <button id="manualBtn" class="secondary">Manueller Modus</button>
+      <button id="resetBtn" class="secondary">Zurücksetzen</button>
+
+      <label for="sensorType">Sensorprinzip</label>
+      <select id="sensorType">
+        <option value="through">Einweglichtschranke</option>
+        <option value="retro">Reflexionslichtschranke</option>
+        <option value="diffuse">Reflexionslichttaster</option>
+      </select>
+
+      <label for="switchMode">Schaltart</label>
+      <select id="switchMode">
+        <option value="dark">Dunkelschaltend</option>
+        <option value="light">Hellschaltend</option>
+      </select>
+
+      <label for="reflectivity">Objektreflexion <span id="reflectivityValue">70 %</span></label>
+      <input id="reflectivity" type="range" min="15" max="100" value="70">
+
+      <label for="position" id="positionLabel">Objektposition (quer zum Lichtstrahl)</label>
+      <input id="position" type="range" min="0" max="100" value="0" disabled>
+
+      <label for="speed">Animationsgeschwindigkeit</label>
+      <input id="speed" type="range" min="1" max="5" value="2">
+    </div>
+
+    <div class="card">
+      <h2>Funktionsablauf</h2>
+      <div class="step active" id="s1">1. Der Sender erzeugt gebündeltes Licht.</div>
+      <div class="step" id="s2">2. Das Licht durchläuft den Überwachungsbereich.</div>
+      <div class="step" id="s3">3. Das Objekt beeinflusst den Lichtweg.</div>
+      <div class="step" id="s4">4. Der Empfänger wertet die Lichtmenge aus.</div>
+      <div class="step" id="s5">5. Die Elektronik schaltet den Ausgang.</div>
+    </div>
+
+    <div class="card">
+      <h2>Legende</h2>
+      <div class="legend">
+        <span class="dot" style="background:#e53935"></span><span>gesendetes Licht</span>
+        <span class="dot" style="background:#f6b73c"></span><span>reflektiertes Licht</span>
+        <span class="dot" style="background:#1c9c5a"></span><span>aktiver Ausgang</span>
+        <span class="dot" style="background:#d04444"></span><span>inaktiver Ausgang</span>
+      </div>
+    </div>
+  </aside>
+</div>
+<footer>Die Darstellung ist didaktisch vereinfacht und nicht maßstabsgetreu.</footer>
+</div>
+
+<script>
+const canvas=document.getElementById("canvas");
+const ctx=canvas.getContext("2d");
+const sensorType=document.getElementById("sensorType");
+const switchMode=document.getElementById("switchMode");
+const reflectivity=document.getElementById("reflectivity");
+const positionSlider=document.getElementById("position");
+const speedSlider=document.getElementById("speed");
+const playBtn=document.getElementById("playBtn");
+const manualBtn=document.getElementById("manualBtn");
+const resetBtn=document.getElementById("resetBtn");
+const detBadge=document.getElementById("detBadge");
+const lightBadge=document.getElementById("lightBadge");
+const outBadge=document.getElementById("outBadge");
+const ledBadge=document.getElementById("ledBadge");
+const logicValue=document.getElementById("logicValue");
+const reflectivityValue=document.getElementById("reflectivityValue");
+const positionLabel=document.getElementById("positionLabel");
+
+let position=0;
+let direction=1;
+let running=true;
+let manual=false;
+let phase=0;
+let last=performance.now();
+
+const descriptions={
+  through:[
+    "1. Der separate Sender erzeugt gebündeltes Licht.",
+    "2. Das Licht trifft direkt auf den gegenüberliegenden Empfänger.",
+    "3. Ein Objekt unterbricht den Lichtstrahl.",
+    "4. Der Empfänger erkennt den Lichtverlust.",
+    "5. Die Elektronik schaltet den Ausgang."
+  ],
+  retro:[
+    "1. Sender und Empfänger befinden sich in einem Gehäuse.",
+    "2. Ein Reflektor wirft das Licht zum Sensor zurück.",
+    "3. Ein Objekt unterbricht Hin- und Rückweg.",
+    "4. Der Empfänger erkennt den Lichtverlust.",
+    "5. Die Elektronik schaltet den Ausgang."
+  ],
+  diffuse:[
+    "1. Sender und Empfänger befinden sich in einem Gehäuse.",
+    "2. Der Sender beleuchtet den Erfassungsbereich.",
+    "3. Das Objekt reflektiert einen Teil des Lichts.",
+    "4. Der Empfänger bewertet die reflektierte Lichtmenge.",
+    "5. Die Elektronik schaltet bei ausreichendem Signal."
+  ]
+};
+
+function roundRect(x,y,w,h,r,fill,stroke){
+  ctx.beginPath();ctx.roundRect(x,y,w,h,r);
+  if(fill){ctx.fillStyle=fill;ctx.fill()}
+  if(stroke){ctx.strokeStyle=stroke;ctx.stroke()}
+}
+
+function drawArrow(x1,y1,x2,y2,color,width){
+  ctx.strokeStyle=color;ctx.fillStyle=color;ctx.lineWidth=width;
+  ctx.beginPath();ctx.moveTo(x1,y1);ctx.lineTo(x2,y2);ctx.stroke();
+  const angle=Math.atan2(y2-y1,x2-x1);
+  ctx.beginPath();ctx.moveTo(x2,y2);
+  ctx.lineTo(x2-11*Math.cos(angle-.45),y2-11*Math.sin(angle-.45));
+  ctx.lineTo(x2-11*Math.cos(angle+.45),y2-11*Math.sin(angle+.45));
+  ctx.closePath();ctx.fill();
+}
+
+function drawBeam(x1,y1,x2,y2,color,alpha){
+  ctx.save();
+  ctx.strokeStyle=color;ctx.shadowColor=color;ctx.shadowBlur=10;
+  ctx.globalAlpha=alpha;ctx.lineWidth=5;
+  ctx.setLineDash([18,8]);ctx.lineDashOffset=-phase*35;
+  ctx.beginPath();ctx.moveTo(x1,y1);ctx.lineTo(x2,y2);ctx.stroke();
+  ctx.setLineDash([]);ctx.restore();
+}
+
+function drawDevice(x,y,label,receiver,ledOn,faceLeft){
+  ctx.save();ctx.shadowColor="rgba(0,0,0,.16)";ctx.shadowBlur=10;
+  roundRect(x,y,145,150,16,"#1475bd");ctx.restore();
+  ctx.fillStyle="#0d4f82";ctx.fillRect(faceLeft?x:x+125,y+18,20,114);
+  ctx.beginPath();ctx.arc(faceLeft?x+16:x+129,y+54,12,0,Math.PI*2);
+  ctx.fillStyle=receiver?"#26313a":"#ff5555";ctx.fill();
+  ctx.strokeStyle="#fff";ctx.lineWidth=2;ctx.stroke();
+  ctx.beginPath();ctx.arc(x+28,y+26,9,0,Math.PI*2);
+  ctx.fillStyle=ledOn?"#24d275":"#ff4f4f";ctx.fill();ctx.stroke();
+  ctx.fillStyle="#fff";ctx.font="bold 15px Arial";ctx.textAlign="center";
+  ctx.fillText(label,x+70,y+92);
+  ctx.font="12px Arial";ctx.fillText(receiver?"EMPFÄNGER":"SENDER",x+70,y+113);
+  ctx.textAlign="start";
+}
+
+function drawCombinedSensor(x,y,ledOn){
+  ctx.save();ctx.shadowColor="rgba(0,0,0,.16)";ctx.shadowBlur=10;
+  roundRect(x,y,170,170,16,"#1475bd");ctx.restore();
+  ctx.fillStyle="#0d4f82";ctx.fillRect(x+145,y+18,25,134);
+  ctx.beginPath();ctx.arc(x+150,y+57,11,0,Math.PI*2);ctx.fillStyle="#ff5555";ctx.fill();
+  ctx.beginPath();ctx.arc(x+150,y+111,11,0,Math.PI*2);ctx.fillStyle="#27343e";ctx.fill();
+  ctx.strokeStyle="#fff";ctx.lineWidth=2;ctx.stroke();
+  ctx.beginPath();ctx.arc(x+29,y+27,9,0,Math.PI*2);ctx.fillStyle=ledOn?"#24d275":"#ff4f4f";ctx.fill();ctx.stroke();
+  ctx.fillStyle="#fff";ctx.font="bold 15px Arial";ctx.textAlign="center";
+  ctx.fillText("SENDER +",x+75,y+78);ctx.fillText("EMPFÄNGER",x+75,y+99);
+  ctx.textAlign="start";
+}
+
+function drawReflector(x,y){
+  roundRect(x,y,42,170,5,"#f3f5f7","#7c8994");
+  ctx.strokeStyle="#c4cbd1";ctx.lineWidth=2;
+  for(let i=0;i<7;i++){ctx.beginPath();ctx.moveTo(x+4,y+8+i*23);ctx.lineTo(x+38,y+27+i*23);ctx.stroke()}
+  ctx.save();ctx.translate(x+24,y+130);ctx.rotate(-Math.PI/2);
+  ctx.fillStyle="#52616d";ctx.font="13px Arial";ctx.fillText("REFLEKTOR",0,0);ctx.restore();
+}
+
+function objectGeometry(type){
+  if(type==="diffuse") return {x:360+position*4.2,y:260,w:92,h:150};
+  return {x:494,y:210+position*2.15,w:54,h:54};
+}
+
+function drawObject(g){
+  ctx.save();ctx.shadowColor="rgba(0,0,0,.2)";ctx.shadowBlur=9;
+  roundRect(g.x,g.y,g.w,g.h,Math.min(14,g.w/5),"#6f7983","#35414a");ctx.restore();
+  ctx.fillStyle="#aeb7bf";
+  ctx.fillStyle="#fff";ctx.font=g.w<70?"bold 10px Arial":"bold 13px Arial";ctx.textAlign="center";
+  ctx.fillText("OBJEKT",g.x+g.w/2,g.y+g.h/2+5);ctx.textAlign="start";
+}
+
+function calculateState(){
+  const type=sensorType.value;
+  const g=objectGeometry(type);
+  let received=1;
+  let detected=false;
+  if(type==="through" || type==="retro"){
+    const returnBeamY=305+(885-g.x)/(885-245)*70;
+    const beamHeights=type==="retro"?[305,returnBeamY]:[330];
+    const blocks=beamHeights.some(beamY=>g.y<=beamY && g.y+g.h>=beamY);
+    received=blocks ? .04 : 1;
+    detected=blocks;
+  }else{
+    const distance=Math.max(0,g.x-270);
+    const reflection=Number(reflectivity.value)/100;
+    received=Math.max(0,Math.min(1,reflection*(1-distance/560)*1.45));
+    detected=received>=.32;
+  }
+  const output=switchMode.value==="light"?received>=.32:received<.32;
+  return {type:type,g:g,received:received,detected:detected,output:output};
+}
+
+function drawScene(state){
+  ctx.fillStyle="#17212b";ctx.font="bold 22px Arial";ctx.fillText("Funktionsprinzip",28,36);
+  ctx.fillStyle="#607080";ctx.font="14px Arial";
+  const titles={
+    through:"Sender und Empfänger stehen sich gegenüber.",
+    retro:"Ein Reflektor führt das Licht zum kombinierten Sensor zurück.",
+    diffuse:"Das Objekt selbst reflektiert Licht zum Sensor."
+  };
+  ctx.fillText(titles[state.type],28,58);
+
+  const beamY=330;
+  if(state.type==="through"){
+    drawDevice(75,255,"OPTISCHER",false,state.output,false);
+    drawDevice(745,255,"OPTISCHER",true,state.output,true);
+    const leftEnd=state.detected?state.g.x:761;
+    drawBeam(220,beamY,leftEnd,beamY,"#e53935",1);
+  }else{
+    drawCombinedSensor(75,245,state.output);
+    if(state.type==="retro"){
+      drawReflector(885,245);
+      const stopX=state.detected?state.g.x:885;
+      drawBeam(245,305,stopX,305,"#e53935",1);
+      if(!state.detected)drawBeam(885,305,245,375,"#f6b73c",.95);
+      else drawBeam(state.g.x,305,state.g.x,305,"#f6b73c",0);
+    }else{
+      const targetX=state.g.x;
+      drawBeam(245,305,targetX,315,"#e53935",.95);
+      if(state.received>.02)drawBeam(targetX,365,245,375,"#f6b73c",Math.max(.18,state.received));
+    }
+  }
+  drawObject(state.g);
+
+
+  const callouts=[
+    ["1","Licht senden",310,105,"#e53935"],
+    ["2",state.type==="diffuse"?"Am Objekt reflektieren":state.type==="retro"?"Am Reflektor umlenken":"Direkt empfangen",650,105,"#f6b73c"],
+    ["3","Lichtmenge auswerten",310,170,"#1682d4"],
+    ["4","Schaltausgang bilden",650,170,"#1c9c5a"]
+  ];
+  callouts.forEach(function(item,index){
+    const active=index<2 || state.detected;
+    ctx.globalAlpha=active?1:.35;ctx.beginPath();ctx.arc(item[2],item[3],16,0,Math.PI*2);
+    ctx.fillStyle=item[4];ctx.fill();ctx.fillStyle="#fff";ctx.font="bold 14px Arial";
+    ctx.textAlign="center";ctx.fillText(item[0],item[2],item[3]+5);ctx.textAlign="start";
+    ctx.fillStyle="#263542";ctx.font="14px Arial";ctx.fillText(item[1],item[2]+25,item[3]+5);ctx.globalAlpha=1;
+  });
+}
+
+function drawSignalChain(state){
+  const y=500,boxWidth=125,gap=28;
+  roundRect(40,y,960,115,10,"#f6f8fa","#ccd5dd");
+  ctx.fillStyle="#17212b";ctx.font="bold 15px Arial";ctx.fillText("Signalverarbeitung",58,y+25);
+  const boxes=[["LED","Sender"],["Lichtweg"],["Foto-","empfänger"],["Verstärker"],["Schalt-","stufe"],["Ausgang","Q"]]
+    .map(function(lines,index){return {lines:lines,x:58+index*(boxWidth+gap)}});
+  ctx.font="11px Arial";
+  boxes.forEach(function(box,i){
+    const output=i===boxes.length-1;
+    roundRect(box.x,y+38,boxWidth,58,8,output?(state.output?"#e7f7ef":"#faecec"):"#fff","#cbd5de");
+    ctx.fillStyle="#253440";ctx.textAlign="center";
+    const first=box.lines.length>1?y+65:y+71;
+    box.lines.forEach(function(line,index){ctx.fillText(line,box.x+boxWidth/2,first+index*14)});
+    ctx.textAlign="start";
+    if(i<boxes.length-1)drawArrow(box.x+boxWidth,y+67,boxes[i+1].x-4,y+67,state.output?"#1c9c5a":"#778590",2);
+  });
+}
+function updateInterface(state){
+  detBadge.textContent=state.detected?"JA":"NEIN";
+  detBadge.className="badge "+(state.detected?"on":"off");
+  const hasLight=state.received>=.32;
+  lightBadge.textContent=hasLight?"JA":"NEIN";
+  lightBadge.className="badge "+(hasLight?"on":"off");
+  outBadge.textContent=state.output?"1":"0";outBadge.className="badge "+(state.output?"on":"off");
+  ledBadge.textContent=state.output?"GRÜN":"ROT";ledBadge.className="badge "+(state.output?"on":"off");
+  logicValue.textContent=switchMode.value==="dark"?"Dunkelschaltend":"Hellschaltend";
+  document.querySelectorAll(".step").forEach(function(el,index){
+    el.textContent=descriptions[state.type][index];
+    el.classList.toggle("active",index<2 || state.detected);
+  });
+}
+
+function updateMode(){
+  const diffuse=sensorType.value==="diffuse";
+  reflectivity.disabled=!diffuse;
+  positionLabel.textContent=diffuse?"Objektabstand zum Sensor":"Objektposition (quer zum Lichtstrahl)";
+  position=0;direction=1;positionSlider.value=position;
+}
+
+function draw(dt){
+  ctx.clearRect(0,0,canvas.width,canvas.height);
+  const state=calculateState();
+  drawScene(state);drawSignalChain(state);updateInterface(state);
+}
+
+function animate(now){
+  const dt=Math.min(32,now-last);last=now;phase+=dt*.004;
+  if(running && !manual){
+    position+=direction*Number(speedSlider.value)*dt*.018;
+    if(position>=100){position=100;direction=-1}
+    if(position<=0){position=0;direction=1}
+    positionSlider.value=position;
+  }
+  draw(dt);requestAnimationFrame(animate);
+}
+
+playBtn.addEventListener("click",function(){
+  running=!running;playBtn.textContent=running?"Pause":"Start";
+});
+manualBtn.addEventListener("click",function(){
+  manual=!manual;positionSlider.disabled=!manual;
+  manualBtn.textContent=manual?"Automatischer Modus":"Manueller Modus";
+});
+positionSlider.addEventListener("input",function(e){position=Number(e.target.value)});
+sensorType.addEventListener("change",updateMode);
+switchMode.addEventListener("change",function(){});
+reflectivity.addEventListener("input",function(){
+  reflectivityValue.textContent=reflectivity.value+" %";
+});
+resetBtn.addEventListener("click",function(){
+  position=0;direction=1;running=true;manual=false;
+  sensorType.value="through";switchMode.value="dark";reflectivity.value=70;
+  reflectivityValue.textContent="70 %";positionSlider.value=0;positionSlider.disabled=true;
+  playBtn.textContent="Pause";manualBtn.textContent="Manueller Modus";updateMode();
+});
+
+updateMode();
+requestAnimationFrame(animate);
+</script>
+</body>
+</html>
